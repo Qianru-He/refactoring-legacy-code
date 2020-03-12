@@ -20,8 +20,6 @@ public class WalletTransaction {
     private Double amount;
     private STATUS status;
     private String walletTransactionId;
-    private RedisDistributedLock instance = RedisDistributedLock.getSingletonInstance();
-    private WalletService walletService = new WalletServiceImpl();
 
 
     public WalletTransaction(String preAssignedId, Long buyerId, Long sellerId, Long productId, String orderId) {
@@ -52,16 +50,16 @@ public class WalletTransaction {
         if (isExecuted()) {
             return true;
         }
+        RedisDistributedLock redisDistributedLock = getRedisDistributedLockInstance();
         boolean isLocked = false;
         try {
-            isLocked = instance.lock(id);
+            isLocked = redisDistributedLock.lock(id);
 
-            // 锁定未成功，返回false
             if (!isLocked) {
                 return false;
             }
             if (isExecuted()) {
-                return true; // double check
+                return true;
             }
 
             if (isExpired()) {
@@ -69,12 +67,17 @@ public class WalletTransaction {
                 return false;
             }
 
+
             return moveMoney();
         } finally {
             if (isLocked) {
-                instance.unlock(id);
+                redisDistributedLock.unlock(id);
             }
         }
+    }
+
+    WalletService getWalletService() {
+        return new WalletServiceImpl();
     }
 
     private boolean isExecuted() {
@@ -86,6 +89,7 @@ public class WalletTransaction {
     }
 
     private boolean moveMoney() {
+        WalletService walletService = getWalletService();
         String walletTransactionId = walletService.moveMoney(id, buyerId, sellerId, amount);
         if (walletTransactionId != null) {
             this.walletTransactionId = walletTransactionId;
@@ -97,7 +101,7 @@ public class WalletTransaction {
         }
     }
 
-    private boolean isExpired() {
+    boolean isExpired() {
         return System.currentTimeMillis() - createdTimestamp > TWENTY_DAYS;
     }
 
@@ -109,12 +113,9 @@ public class WalletTransaction {
         this.amount = amount;
     }
 
-    public void setInstance(RedisDistributedLock distributedLock) {
-        this.instance = distributedLock;
-    }
 
-    public void setWalletService(WalletServiceImpl service) {
-        this.walletService = service;
+    RedisDistributedLock getRedisDistributedLockInstance() {
+        return RedisDistributedLock.getSingletonInstance();
     }
 
     public STATUS getStatus() {

@@ -1,22 +1,21 @@
 package cn.xpbootcamp.legacy_code;
 
 import cn.xpbootcamp.legacy_code.enums.STATUS;
+import cn.xpbootcamp.legacy_code.service.WalletService;
 import cn.xpbootcamp.legacy_code.service.WalletServiceImpl;
 import cn.xpbootcamp.legacy_code.utils.RedisDistributedLock;
 import org.junit.jupiter.api.Test;
 
 import javax.transaction.InvalidTransactionException;
 
+import java.util.UUID;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 public class WalletTransactionTest {
-	private WalletServiceImpl service = mock(WalletServiceImpl.class);
-	private RedisDistributedLock distributedLock = mock(RedisDistributedLock.class);
-
 
 	@Test
 	void should_throw_exception_when_buyerId_null() {
@@ -47,13 +46,18 @@ public class WalletTransactionTest {
 
 	@Test
 	void should_return_false_when_moveMoney_return_null() throws InvalidTransactionException {
-		when(service.moveMoney("t_h1", 1L, 2L, 10D)).thenReturn(null);
-		when(distributedLock.lock("t_h1")).thenReturn(true);
 
-		WalletTransaction walletTransaction = new WalletTransaction("t_h1", 1L, 2L, 1L, "aa");
+		RedisDistributedLock redisDistributedLock = mock(RedisDistributedLock.class);
+		when(redisDistributedLock.lock("t_h1")).thenReturn(true);
+
+		WalletService walletService = mock(WalletServiceImpl.class);
+		when(walletService.moveMoney("t_h1", 1L, 1L, 1d)).thenReturn(null);
+
+
+		WalletTransaction walletTransaction = spy(new WalletTransaction("t_h1", 1L, 1L, 1L, "aa"));
+		doReturn(redisDistributedLock).when(walletTransaction).getRedisDistributedLockInstance();
+		doReturn(walletService).when(walletTransaction).getWalletService();
 		walletTransaction.setAmount(10D);
-		walletTransaction.setInstance(distributedLock);
-		walletTransaction.setWalletService(service);
 
 		assertFalse(walletTransaction.execute());
 		assertEquals(STATUS.FAILED, walletTransaction.getStatus());
@@ -61,15 +65,52 @@ public class WalletTransactionTest {
 
 	@Test
 	void should_return_true_when_moveMoney_successful() throws InvalidTransactionException {
-		when(service.moveMoney("t_h1", 1L, 2L, 10D)).thenReturn("aaa");
-		when(distributedLock.lock("t_h1")).thenReturn(true);
 
-		WalletTransaction walletTransaction = new WalletTransaction("t_h1", 1L, 2L, 1L, "aa");
-		walletTransaction.setAmount(10D);
-		walletTransaction.setInstance(distributedLock);
-		walletTransaction.setWalletService(service);
+		RedisDistributedLock redisDistributedLock = mock(RedisDistributedLock.class);
+		when(redisDistributedLock.lock("t_h1")).thenReturn(true);
+
+		WalletService walletService = mock(WalletServiceImpl.class);
+		when(walletService.moveMoney("t_h1", 1L, 1L, 1d)).thenReturn(UUID.randomUUID().toString() + "aaa");
+
+
+		WalletTransaction walletTransaction = spy(new WalletTransaction("t_h1", 1L, 1L, 1L, "aa"));
+		doReturn(redisDistributedLock).when(walletTransaction).getRedisDistributedLockInstance();
+		doReturn(walletService).when(walletTransaction).getWalletService();
+		walletTransaction.setAmount(1L);
 
 		assertTrue(walletTransaction.execute());
 		assertEquals(STATUS.EXECUTED, walletTransaction.getStatus());
+	}
+
+	@Test
+	void should_return_true_when_locked_failed() throws InvalidTransactionException {
+		RedisDistributedLock redisDistributedLock = mock(RedisDistributedLock.class);
+		when(redisDistributedLock.lock("t_h1")).thenReturn(false);
+
+		WalletService walletService = mock(WalletServiceImpl.class);
+		when(walletService.moveMoney("t_h1", 1L, 1L, 1d)).thenReturn(UUID.randomUUID().toString() + "t_h1");
+
+		WalletTransaction walletTransaction = spy(new WalletTransaction("t_h1", 1L, 1L, 1L, "aa"));
+		doReturn(redisDistributedLock).when(walletTransaction).getRedisDistributedLockInstance();
+		doReturn(walletService).when(walletTransaction).getWalletService();
+		walletTransaction.setAmount(1L);
+		assertFalse(walletTransaction.execute());
+	}
+
+	@Test
+	void executeTestReturnTrueWhenExpired() throws InvalidTransactionException {
+		RedisDistributedLock redisDistributedLock = mock(RedisDistributedLock.class);
+		when(redisDistributedLock.lock("t_h1")).thenReturn(true);
+
+		WalletService walletService = mock(WalletServiceImpl.class);
+		when(walletService.moveMoney("t_h1", 1L, 1L, 1d)).thenReturn(UUID.randomUUID().toString() + "aaa");
+
+		WalletTransaction walletTransaction = spy(new WalletTransaction("t_h1", 1L, 1L, 1L, "aa"));
+		doReturn(redisDistributedLock).when(walletTransaction).getRedisDistributedLockInstance();
+		doReturn(walletService).when(walletTransaction).getWalletService();
+		doReturn(true).when(walletTransaction).isExpired();
+		walletTransaction.setAmount(1L);
+
+		assertFalse(walletTransaction.execute());
 	}
 }
