@@ -9,6 +9,8 @@ import cn.xpbootcamp.legacy_code.utils.RedisDistributedLock;
 import javax.transaction.InvalidTransactionException;
 
 public class WalletTransaction {
+    public static final int TWENTY_DAYS = 1728000000;
+    public static final String PREFIX_OF_TRANSACTION_ID = "t_";
     private String id;
     private Long buyerId;
     private Long sellerId;
@@ -23,14 +25,7 @@ public class WalletTransaction {
 
 
     public WalletTransaction(String preAssignedId, Long buyerId, Long sellerId, Long productId, String orderId) {
-        if (preAssignedId != null && !preAssignedId.isEmpty()) {
-            this.id = preAssignedId;
-        } else {
-            this.id = IdGenerator.generateTransactionId();
-        }
-        if (!this.id.startsWith("t_")) {
-            this.id = "t_" + preAssignedId;
-        }
+        this.id = generateId(preAssignedId);
         this.buyerId = buyerId;
         this.sellerId = sellerId;
         this.productId = productId;
@@ -39,11 +34,24 @@ public class WalletTransaction {
         this.createdTimestamp = System.currentTimeMillis();
     }
 
+    private String generateId(String preAssignedId) {
+        if (isValidPreAssignedId(preAssignedId)) {
+            return preAssignedId.startsWith(PREFIX_OF_TRANSACTION_ID) ? preAssignedId : PREFIX_OF_TRANSACTION_ID + preAssignedId;
+        }
+        return PREFIX_OF_TRANSACTION_ID + IdGenerator.generateTransactionId();
+    }
+
+    private boolean isValidPreAssignedId(String preAssignedId) {
+        return preAssignedId != null && !preAssignedId.isEmpty();
+    }
+
     public boolean execute() throws InvalidTransactionException {
-        if (buyerId == null || (sellerId == null || amount < 0.0)) {
+        if (isInvalid()) {
             throw new InvalidTransactionException("This is an invalid transaction");
         }
-        if (status == STATUS.EXECUTED) return true;
+        if (isExecuted()) {
+            return true;
+        }
         boolean isLocked = false;
         try {
             isLocked = instance.lock(id);
@@ -52,27 +60,45 @@ public class WalletTransaction {
             if (!isLocked) {
                 return false;
             }
-            if (status == STATUS.EXECUTED) return true; // double check
-            long executionInvokedTimestamp = System.currentTimeMillis();
-            // 交易超过20天
-            if (executionInvokedTimestamp - createdTimestamp > 1728000000) {
+            if (isExecuted()) {
+                return true; // double check
+            }
+
+            if (isExpired()) {
                 this.status = STATUS.EXPIRED;
                 return false;
             }
-            String walletTransactionId = walletService.moveMoney(id, buyerId, sellerId, amount);
-            if (walletTransactionId != null) {
-                this.walletTransactionId = walletTransactionId;
-                this.status = STATUS.EXECUTED;
-                return true;
-            } else {
-                this.status = STATUS.FAILED;
-                return false;
-            }
+
+            return moveMoney();
         } finally {
             if (isLocked) {
                 instance.unlock(id);
             }
         }
+    }
+
+    private boolean isExecuted() {
+        return status == STATUS.EXECUTED;
+    }
+
+    private boolean isInvalid() {
+        return buyerId == null || sellerId == null || amount < 0.0;
+    }
+
+    private boolean moveMoney() {
+        String walletTransactionId = walletService.moveMoney(id, buyerId, sellerId, amount);
+        if (walletTransactionId != null) {
+            this.walletTransactionId = walletTransactionId;
+            this.status = STATUS.EXECUTED;
+            return true;
+        } else {
+            this.status = STATUS.FAILED;
+            return false;
+        }
+    }
+
+    private boolean isExpired() {
+        return System.currentTimeMillis() - createdTimestamp > TWENTY_DAYS;
     }
 
     public void setStatus(STATUS status) {
